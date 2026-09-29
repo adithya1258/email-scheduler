@@ -1,42 +1,41 @@
-# Email Job Scheduler
+# Email Scheduler
 
-A full-stack email scheduling service: users log in with Google, upload a list of leads, and schedule
-a campaign. The backend spaces out the sends, enforces per-sender hourly limits, and sends through
-SMTP (Ethereal). Jobs survive restarts and are never sent twice.
+Schedule bulk emails like a boss. Sign in with Google, upload your contacts, set up a campaign, and let the system handle the rest. Emails get staggered automatically, you won't hit rate limits, and everything's backed up so nothing gets lost or sent twice.
 
-| Layer    | Stack                                                                                                         |
-| -------- | ------------------------------------------------------------------------------------------------------------- |
-| Backend  | TypeScript, Express 5, **BullMQ** (delayed jobs, no cron), Redis (ioredis), PostgreSQL, Nodemailer + Ethereal |
-| Frontend | Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS 4, Google OAuth (`@react-oauth/google`)           |
+## Stack
+
+| Part | Tech |
+| --- | --- |
+| API & Jobs | TypeScript, Express 5, BullMQ (for scheduling), Redis, PostgreSQL |
+| Emails | Nodemailer + Ethereal (or your own SMTP) |
+| UI | Next.js 16, React 19, Tailwind, Google OAuth |
+
+## The folder layout
 
 ```
 email-scheduler/
-├── docker-compose.yml        # local dev: Postgres + Redis (AOF persistence)
-├── docker-compose.prod.yml   # production: full stack + Caddy (HTTPS) on one server
-├── Caddyfile                 # reverse proxy config for production
-├── DEPLOYMENT.md             # step-by-step hosting guide
-├── backend/                  # API + BullMQ worker (Dockerfile included)
-└── frontend/                 # Next.js dashboard (Dockerfile included)
+├── docker-compose.yml        # Dev: Postgres + Redis
+├── docker-compose.prod.yml   # Prod: full stack with HTTPS
+├── Caddyfile                 # Reverse proxy setup
+├── DEPLOYMENT.md             # How to deploy (Railway, Vercel, or your own server)
+├── backend/                  # API + job worker
+└── frontend/                 # Dashboard
 ```
 
-**Deploying?** See **[DEPLOYMENT.md](DEPLOYMENT.md)** for step-by-step instructions: Railway + Vercel,
-or a single server with Docker Compose and automatic HTTPS.
+**Ready to deploy?** Jump to [DEPLOYMENT.md](DEPLOYMENT.md). We cover Railway + Vercel, or running everything on one server with Docker Compose and automatic HTTPS.
 
-**Just want a live demo?** Import this repo on [Vercel](https://vercel.com/new) with Root Directory
-`frontend` and no environment variables. The frontend then runs in **demo mode**, with the scheduler
-engine (queue, 2 s gap, hourly limits, restart recovery) simulated in the browser. See
-[DEPLOYMENT.md, Option D](DEPLOYMENT.md#option-d-vercel-only-frontend-demo-mode).
+**Just want to see it work?** Deploy the frontend folder to Vercel and it'll run in demo mode—everything happens in your browser, no backend needed.
 
 ---
 
-## 1. Running it locally
+## Getting it running locally
 
-### Prerequisites
+### What you need
 
 - Node.js 20+ (tested on 22)
-- Docker (for Postgres and Redis), or local installs of PostgreSQL 14+ and Redis 6.2+
+- Docker (or install PostgreSQL 14+ and Redis 6.2+ yourself)
 
-### Start Redis and Postgres
+### Fire up the database
 
 ```bash
 cd email-scheduler
@@ -47,165 +46,140 @@ docker compose up -d
 
 ```bash
 cd backend
-cp .env.example .env        # then fill in GOOGLE_CLIENT_ID and JWT_SECRET
+cp .env.example .env        # Fill in GOOGLE_CLIENT_ID and JWT_SECRET
 npm install
-npm run dev                 # API on :4000 with an embedded worker
+npm run dev                 # Runs on :4000 with a worker built in
 ```
 
-The schema is created automatically on boot. To scale sending, run the API without a worker and start
-as many workers as you like:
+The database tables get created automatically. To scale up, separate the API from the worker:
 
 ```bash
-RUN_WORKER=false npm run dev    # API only
-npm run dev:worker              # run this in N terminals / containers
+RUN_WORKER=false npm run dev    # Just the API
+npm run dev:worker              # Worker (run this in multiple terminals)
 ```
 
-For production: `npm run build && npm start` (API + worker) or `npm run start:worker`.
+Production: `npm run build && npm start`
 
 ### Frontend
 
 ```bash
 cd frontend
-cp .env.example .env.local  # set NEXT_PUBLIC_GOOGLE_CLIENT_ID
+cp .env.example .env.local  # Add NEXT_PUBLIC_GOOGLE_CLIENT_ID
 npm install
-npm run dev                 # http://localhost:3000
+npm run dev                 # Open http://localhost:3000
 ```
 
-### Ethereal (fake SMTP)
+### Sending emails through Ethereal
 
-Nothing to do by default: on first boot the backend creates an Ethereal account through Nodemailer
-and saves it in the `senders` table, so it stays the same across restarts. To use your own account,
-create one at <https://ethereal.email/create> and set `ETHEREAL_USER` / `ETHEREAL_PASS`.
-Every sent email stores an Ethereal **preview URL**, linked from the email detail page.
+By default, we create a free Ethereal account for you on first run and reuse it forever. Every email sent gets a preview link you can click to see what it looked like.
 
-For offline development, `MAIL_MODE=log` skips SMTP and just logs each message.
+Want to use your own provider? Create an Ethereal account at <https://ethereal.email/create>, then set `ETHEREAL_USER` and `ETHEREAL_PASS` in your `.env`.
 
-### Google OAuth
+Running offline? Set `MAIL_MODE=log` and emails just print to the console.
 
-1. In Google Cloud Console, go to **APIs & Services → Credentials → Create OAuth client ID → Web application**.
-2. Under **Authorized JavaScript origins**, add `http://localhost:3000`.
-3. Put the client ID in both `backend/.env` (`GOOGLE_CLIENT_ID`) and `frontend/.env.local`
-   (`NEXT_PUBLIC_GOOGLE_CLIENT_ID`).
+### Setting up Google OAuth
 
-The frontend gets a Google access token through the OAuth popup. The backend checks it with Google's
-`tokeninfo` endpoint, rejecting it unless it was issued to **our** client ID, then reads the
-profile (name, email, avatar) and returns its own JWT. Email/password sign-up is also available.
+1. Head to Google Cloud Console → APIs & Services → Credentials
+2. Create an OAuth client for a web app
+3. Add `http://localhost:3000` to Authorized JavaScript Origins
+4. Grab your Client ID and put it in:
+   - `backend/.env` as `GOOGLE_CLIENT_ID`
+   - `frontend/.env.local` as `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+
+The frontend pops up a Google login. The backend verifies it and hands back your own JWT. You can also just sign up with email/password.
 
 ---
 
-## 2. Architecture
+## How it works
 
 ```
- Next.js ──REST──► Express API ──(1) INSERT campaign + emails (1 tx)──► PostgreSQL  (source of truth)
-                        │
-                        └──(2) addBulk delayed jobs, jobId = email.id ──► Redis / BullMQ
-                                                                             │
-                              ┌──────────────── Worker(s), concurrency N ◄───┘
-                              │  a. atomically claim row (scheduled → sending)
-                              │  b. Redis hourly-slot check for the sender (Lua, atomic)
-                              │  c. send via SMTP → mark sent (+ preview URL)
-                              └──────────────────────────────────────────────────►  Ethereal SMTP
+Next.js ──────► Express API ──(1) Save campaign & emails in one transaction ──► Database
+                     │
+                     └──(2) Add delayed jobs ──────► Redis + BullMQ
+                                                         │
+                             Workers (multiple copies) ◄─┘
+                             1. Claim an email (lock it)
+                             2. Check hourly limit
+                             3. Send via SMTP
+                             4. Mark done
 ```
 
-### How scheduling works
+### The scheduling part
 
-`POST /api/emails/schedule` normalises and de-duplicates recipients, then in **one transaction**
-inserts a `campaigns` row and one `emails` row per recipient. Email `i` is scheduled at
-`startAt + i × delayBetweenEmails`. After the commit, each email gets a **BullMQ delayed job**
-(`delay = scheduled_at − now`). No cron and no polling: Redis wakes the job at the right time.
+When you create a campaign, we:
+1. Save the campaign and all email addresses in one database transaction
+2. Space them out by scheduling each one at `startTime + (position × delay)`
+3. Push each email to a job queue with that scheduled time
+4. Redis wakes up each job at exactly the right moment
 
-### Persistence across restarts
+No cron, no polling—just Redis doing its thing.
 
-- **Postgres is the source of truth.** Every email row has a status:
-  `scheduled → sending → sent | failed`.
-- **BullMQ jobs live in Redis.** Delayed jobs survive an API or worker restart. With AOF enabled
-  (see `docker-compose.yml`), they also survive a Redis restart.
-- **Recovery on boot.** Every worker process re-enqueues all rows still `scheduled` or `sending`.
-  Because `jobId = email.id`, BullMQ ignores jobs that already exist and only recreates missing
-  ones. So even a fully wiped Redis, or a crash between the DB commit and the enqueue, loses nothing.
-  (Tested: flushed Redis with pending emails, restarted, and all of them were re-queued.)
-- **Graceful shutdown.** On SIGINT/SIGTERM, workers finish in-flight jobs before exiting.
+### Stuff doesn't get lost
 
-### No duplicate sends (idempotency)
+- **Database is the source of truth**: Every email has a status (`scheduled` → `sending` → `sent` or `failed`)
+- **Jobs survive restarts**: BullMQ keeps jobs in Redis, even if you turn off the server
+- **Recovery on boot**: Workers check the database when they start and re-queue anything that's still pending
+- **Graceful shutdown**: Workers finish what they're doing before exiting
 
-1. `jobId = email.id`, so the same email can only be queued once.
-2. Before sending, the worker **claims** the row with one conditional
-   `UPDATE … SET status='sending' WHERE status='scheduled'`. Only one worker can win, however many
-   are running. Anything already `sent` or `failed` is skipped.
-3. A row left in `sending` by a crashed worker becomes claimable again after 5 minutes.
-   This is the only case where a duplicate is possible: SMTP accepted the message but the process
-   died before recording it. No SMTP provider can rule that out.
-4. `UNIQUE (campaign_id, to_email)` stops the same address appearing twice in a campaign.
+### You'll never send twice
 
-Tested with 3 processes sending 30 emails at once: exactly 30 sends, no duplicates.
+1. Each job's ID is tied to a specific email, so it can't get queued twice
+2. Before sending, we lock the database row (`UPDATE ... SET status='sending' WHERE status='scheduled'`)—only one worker can win
+3. If a worker crashes while sending, we wait 5 minutes then retry (this is the only way a duplicate could happen)
+4. The database prevents the same email from being added to the same campaign twice
 
-### Rate limiting and concurrency
+### Rate limits & concurrency
 
-| Setting                                    | Where                                     | What it does                                                                                                       |
-| ------------------------------------------ | ----------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| `WORKER_CONCURRENCY` (default 5)           | BullMQ `Worker` option                    | Jobs processed in parallel **per worker process**                                                                  |
-| `MIN_DELAY_BETWEEN_EMAILS_MS` (default 2000) | BullMQ `limiter { max: 1, duration }`   | Minimum gap between any two sends, **across all workers**. It mimics provider throttling and is stored in Redis.   |
-| Delay between 2 emails (UI)                | `scheduled_at` spacing                    | Spaces out the emails within one campaign                                                                          |
-| Hourly Limit (UI)                          | Redis counter per sender per hour window  | Maximum sends per sender per hour                                                                                  |
-| `MAX_EMAILS_PER_HOUR_PER_SENDER` (default 200) | server cap                            | Upper bound on the UI hourly limit                                                                                 |
+| What | Where | Does |
+| --- | --- | --- |
+| Parallel jobs per worker | BullMQ | How many emails send at the same time on one worker |
+| Min gap between emails | Redis limiter | Slowdown between all sends (mimics provider throttling) |
+| Delay in campaign | Your UI choice | Space between emails in a single campaign |
+| Hourly cap | Redis counter | Max emails per sender per hour |
+| Server cap | Config | Upper bound on what you can set in the UI |
 
-**The hourly limit is shared safely across workers.** Each send runs a small Lua script against
-`ratelimit:sender:{senderId}:{hourWindow}` that increments and checks the counter in a single
-atomic step, so any number of workers or machines share the same count.
+The hourly limit uses a Redis script so every worker sees the same count, no matter how many are running.
 
-**When the limit is reached, emails are rescheduled, not dropped.** The job is moved back to
-BullMQ's delayed set (`moveToDelayed` + `DelayedError`, which does not count as a failed attempt),
-and the row's `scheduled_at` is set to the start of the **next hour window**. The dashboard shows
-the new time. Each overflowing email takes a numbered ticket for that window and is offset by
-`ticket × MIN_DELAY`, so deferred emails keep their original order and don't all fire at `hh:00:00`.
-
-**Failures are retried.** SMTP errors retry 3 times with exponential backoff (30s, 60s, 120s).
-After the last attempt the email is marked `failed` and the error is saved.
+When you hit the hourly limit, emails get bumped to the next hour—they're not dropped. The dashboard updates in real time with the new send time.
 
 ---
 
-## 3. API
+## API endpoints
 
-All routes except auth need `Authorization: Bearer <jwt>`.
+Everything except auth requires `Authorization: Bearer <your_jwt>`.
 
-| Method | Path                         | Description                                                                                                |
-| ------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| POST   | `/api/auth/google`           | `{ accessToken }` or `{ credential }` (ID token) → `{ token, user }`                                       |
-| POST   | `/api/auth/register`         | `{ email, password, name? }` → `{ token, user }`                                                           |
-| POST   | `/api/auth/login`            | `{ email, password }` → `{ token, user }`                                                                  |
-| GET    | `/api/auth/me`               | current user                                                                                               |
-| GET    | `/api/senders`               | sender mailboxes for the "From" dropdown                                                                   |
-| POST   | `/api/emails/schedule`       | `{ senderId, subject, body(html), recipients[], startAt, delayBetweenEmailsMs, hourlyLimit }`              |
-| GET    | `/api/emails?tab=scheduled\|sent&search=&limit=&offset=` | list for the dashboard tabs                                                    |
-| GET    | `/api/emails/stats`          | `{ scheduled, sent, failed }` counts for the sidebar                                                       |
-| GET    | `/api/emails/:id`            | email detail (status, attempts, error, Ethereal preview URL)                                               |
-| PATCH  | `/api/emails/:id/star`       | `{ starred }`                                                                                              |
-| GET    | `/health`                    | liveness                                                                                                   |
+| Method | Path | What it does |
+| --- | --- | --- |
+| POST | `/api/auth/google` | Google sign-in → JWT |
+| POST | `/api/auth/register` | Sign up with email/password |
+| POST | `/api/auth/login` | Sign in with email/password |
+| GET | `/api/auth/me` | Your profile |
+| GET | `/api/senders` | Your sender accounts |
+| POST | `/api/emails/schedule` | Create a campaign |
+| GET | `/api/emails?tab=scheduled\|sent&search=...` | List emails |
+| GET | `/api/emails/stats` | Counts (scheduled, sent, failed) |
+| GET | `/api/emails/:id` | Email details & preview link |
+| PATCH | `/api/emails/:id/star` | Star/unstar an email |
+| GET | `/health` | Health check |
 
 ---
 
-## 4. Frontend features
+## What you get in the UI
 
-- **Login**: "Login with Google" (real OAuth), plus email/password sign-up and sign-in.
-- **Sidebar**: user avatar, name and email, with a logout menu; a **Compose** button; and
-  **Scheduled** / **Sent** links with live counts.
-- **Scheduled / Sent lists**: `To:`, a status pill (orange with the send time when scheduled, grey
-  "Sent", red "Failed"), subject, body preview and a star. Includes search, a starred filter,
-  refresh, loading skeletons and empty states. The lists poll every 5s, so emails move from
-  Scheduled to Sent without a reload.
-- **Email detail**: sender, recipient, time, rendered body, delivery attempts, last error, and a
-  link to the Ethereal preview.
-- **Compose New Email**:
-  - "From" picks a sender.
-  - "To" takes chips (type, paste or press Enter). **Upload List** reads a `.csv` or `.txt` file,
-    pulls out every email address and shows "N emails detected".
-  - Subject, **Delay between 2 emails** (seconds), and **Hourly Limit**.
-  - Rich-text editor: undo/redo, heading, bold/italic/underline, alignment, lists, quote,
-    strikethrough, link and clear formatting.
-  - **Send Later** popover: a date-time picker plus presets (Now, Tomorrow, Tomorrow 10:00 AM /
-    11:00 AM / 3:00 PM), with Cancel and Done.
-- Responsive layout: on mobile the sidebar becomes a slide-out drawer.
+- **Login**: Google OAuth, or email/password
+- **Sidebar**: Your profile, Compose button, and tabs for Scheduled/Sent with live counts
+- **Scheduled & Sent tabs**: Full email list with search, filters, status badges, and previews. Refreshes every 5 seconds
+- **Email detail**: Sender, recipient, time, body preview, delivery attempts, errors, and a link to the Ethereal preview
+- **Compose**:
+  - Pick a sender
+  - Add recipients (type, paste, or upload a `.csv`/`.txt` file—we'll extract email addresses)
+  - Set subject, delay between sends, and hourly limit
+  - Rich text editor (formatting, links, lists, quotes)
+  - Date/time picker with quick presets (Now, Tomorrow at 10 AM, etc.)
+- **Mobile friendly**: Sidebar turns into a drawer on small screens
 
-## 5. Configuration reference
+---
 
-See `backend/.env.example` and `frontend/.env.example`. Every variable is documented inline.
+## Configuration
+
+All settings live in `.env.example` files in the `backend` and `frontend` folders. Check them out—each variable is documented inline.
