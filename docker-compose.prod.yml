@@ -5,6 +5,9 @@
 # Caddy serves everything on one domain with automatic HTTPS:
 #   https://DOMAIN/api/*, /health  -> backend
 #   https://DOMAIN/*               -> frontend
+#
+# Own computer + public link instead (DEPLOYMENT.md, "Option C"):
+#   use .env.tunnel.example (DOMAIN=:80) and add `--profile tunnel`.
 name: email-scheduler-prod
 
 services:
@@ -61,8 +64,8 @@ services:
     build:
       context: ./frontend
       args:
-        # Same origin as the site: Caddy routes /api to the backend
-        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+        # Empty = same origin as the page: Caddy routes /api to the backend
+        NEXT_PUBLIC_API_URL: ''
         NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
     restart: unless-stopped
     depends_on:
@@ -83,6 +86,16 @@ services:
     depends_on:
       - frontend
       - backend
+
+  # Optional: public https://<random>.trycloudflare.com link to this machine, no domain or
+  # account needed. Only starts with `--profile tunnel`. Find the URL with `logs cloudflared`.
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ['tunnel']
+    restart: unless-stopped
+    command: ['tunnel', '--no-autoupdate', '--url', 'http://caddy:80']
+    depends_on:
+      - caddy
 
 volumes:
   pgdata:

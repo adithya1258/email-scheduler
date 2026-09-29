@@ -1,3 +1,4 @@
+// Unset -> local dev backend. Empty string -> same origin (a reverse proxy routes /api to the backend).
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:4000';
 
 const TOKEN_KEY = 'es_token';

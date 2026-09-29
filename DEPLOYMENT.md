@@ -2,7 +2,13 @@
 
 This guide takes the Email Job Scheduler from this repository to a live URL.
 
-There are two ways to host it. Pick one:
+There are two ways to host it permanently, plus a quick option for sharing a link from your own
+computer. Pick one:
+
+> **Just want a link fast, and you have Docker installed?** Use
+> **[Option C: your own computer + a Cloudflare quick tunnel](#option-c-your-own-computer--a-public-link-cloudflare-quick-tunnel)**.
+> It needs no accounts, credentials or domain and takes about 10 minutes. The link only works
+> while your computer is on and Docker is running.
 
 |                    | **Option A: Railway + Vercel** (easiest)                           | **Option B: Your own server (VPS)**                                   |
 | ------------------ | ------------------------------------------------------------------ | --------------------------------------------------------------------- |
@@ -27,10 +33,11 @@ Both options need **Step 1 (Google OAuth)** first.
 1. [Step 1: Create Google OAuth credentials](#step-1-create-google-oauth-credentials)
 2. [Option A: Railway (backend) + Vercel (frontend)](#option-a-railway-backend--vercel-frontend)
 3. [Option B: Single server with Docker Compose](#option-b-single-server-vps-with-docker-compose)
-4. [Ethereal: viewing the emails you send](#ethereal-viewing-the-emails-you-send)
-5. [Checking the deployment works](#checking-the-deployment-works)
-6. [Troubleshooting](#troubleshooting)
-7. [Environment variable reference](#environment-variable-reference)
+4. [Option C: Your own computer + a public link](#option-c-your-own-computer--a-public-link-cloudflare-quick-tunnel)
+5. [Ethereal: viewing the emails you send](#ethereal-viewing-the-emails-you-send)
+6. [Checking the deployment works](#checking-the-deployment-works)
+7. [Troubleshooting](#troubleshooting)
+8. [Environment variable reference](#environment-variable-reference)
 
 ---
 
@@ -300,6 +307,128 @@ alias dc='docker compose -f docker-compose.prod.yml --env-file .env.prod'
 > ⚠️ `dc down -v` **deletes all data** (the database, Redis, and certificates). Only use `-v` if you really mean it.
 
 Containers have `restart: unless-stopped`, so they come back up automatically after a server reboot.
+
+---
+
+## Option C: Your own computer + a public link (Cloudflare quick tunnel)
+
+This runs the whole stack in **Docker on your own computer** (Windows, macOS or Linux).
+[Cloudflare Quick Tunnels](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/do-more-with-tunnels/trycloudflare/)
+then give it a public `https://<random-words>.trycloudflare.com` link. You don't need a Cloudflare
+account, a domain, port forwarding or any credentials.
+
+**Good to know before you start:**
+- The link works only while your computer is on and Docker is running.
+- The link **changes every time the tunnel restarts**. Quick tunnels are meant for demos and
+  testing. For a permanent URL use Option A or B.
+- Your data (users, emails) is kept in Docker volumes on your computer between restarts.
+
+### C1. Requirements
+
+- **Docker Desktop** (Windows/macOS) or Docker Engine (Linux), running. Check in a terminal:
+  ```bash
+  docker --version
+  docker compose version
+  ```
+- **Git** (<https://git-scm.com/downloads>), or download the repo as a ZIP from GitHub
+  (**Code → Download ZIP**) and unzip it.
+- Around 4 GB of free RAM for Docker while building. On Docker Desktop you can change this under
+  **Settings → Resources**.
+
+### C2. Get the code and create the settings file
+
+**macOS / Linux (Terminal):**
+
+```bash
+git clone https://github.com/adithya1258/email-scheduler.git
+cd email-scheduler
+cp .env.tunnel.example .env.prod
+```
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/adithya1258/email-scheduler.git
+cd email-scheduler
+copy .env.tunnel.example .env.prod
+```
+
+Open `.env.prod` in any text editor (e.g. `notepad .env.prod`) and fill in the two secrets with
+long random **letters and digits**. Any 30+ characters will do:
+
+```env
+DOMAIN=:80
+POSTGRES_PASSWORD=pick32randomlettersanddigits1234
+JWT_SECRET=another40randomlettersanddigitsabcdef1234
+GOOGLE_CLIENT_ID=
+MAIL_MODE=ethereal
+```
+
+Leave `DOMAIN=:80` exactly as it is. You can leave `GOOGLE_CLIENT_ID` empty for now:
+email/password sign-up works without it. See C5 to turn on Google login.
+
+### C3. Start everything, including the tunnel
+
+Run this from the `email-scheduler` folder (the same command works on every OS):
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tunnel up -d --build
+```
+
+The first run downloads images and builds the app, which takes 3–10 minutes. Then check that
+everything is up:
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tunnel ps
+```
+
+You should see `postgres` and `redis` **healthy**, and `backend`, `frontend`, `caddy` and
+`cloudflared` **Up**.
+
+At this point <http://localhost> already works on your own computer.
+
+### C4. Get your public link
+
+```bash
+docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tunnel logs cloudflared
+```
+
+Look for a box like this:
+
+```
+Your quick Tunnel has been created! Visit it at (it may take some time to be reachable):
+https://calm-river-example-words.trycloudflare.com
+```
+
+**That `https://….trycloudflare.com` address is your public link.** Open it and share it. It can
+take up to a minute to start working. Sign up with email and password, then try the checklist in
+[Checking the deployment works](#checking-the-deployment-works).
+
+### C5. (Optional) Turn on Google login
+
+1. Create the OAuth client as in [Step 1](#step-1-create-google-oauth-credentials). Add your
+   `https://….trycloudflare.com` link (and `http://localhost`) under **Authorized JavaScript origins**.
+2. Put the client ID in `.env.prod` as `GOOGLE_CLIENT_ID=...`.
+3. Rebuild, because the frontend needs the ID baked in:
+   ```bash
+   docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tunnel up -d --build
+   ```
+
+If the tunnel restarts and you get a new link, add the new link to the Google origins as well.
+
+### C6. Stopping, starting and updating
+
+| Task | Command |
+| --- | --- |
+| Stop everything (data is kept) | `docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tunnel down` |
+| Start again later | `docker compose -f docker-compose.prod.yml --env-file .env.prod --profile tunnel up -d` then get the **new** link with the `logs cloudflared` command |
+| Update to the latest code | `git pull` then the `up -d --build` command from C3 |
+| Backend logs | `docker compose -f docker-compose.prod.yml --env-file .env.prod logs -f backend` |
+
+If `caddy` won't start because port 80 or 443 is already in use (for example by Skype, IIS or
+another web server), stop that program, or edit the `caddy` → `ports` section of
+`docker-compose.prod.yml`: change `'80:80'` to `'8080:80'` and `'443:443'` to `'8443:443'`.
+The tunnel keeps working either way, and locally you'd use <http://localhost:8080>.
 
 ---
 
