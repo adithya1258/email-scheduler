@@ -26,7 +26,8 @@ interface User {
   id: string;
   email: string;
   name: string;
-  passwordHash: string;
+  passwordHash: string; // empty for Google-only accounts
+  avatarUrl?: string | null;
 }
 
 interface Campaign {
@@ -236,7 +237,7 @@ async function hash(s: string) {
   return Array.from(new Uint8Array(buf), (b) => b.toString(16).padStart(2, '0')).join('');
 }
 
-const publicUser = (u: User) => ({ id: u.id, email: u.email, name: u.name, avatarUrl: null });
+const publicUser = (u: User) => ({ id: u.id, email: u.email, name: u.name, avatarUrl: u.avatarUrl ?? null });
 const session = (u: User) => ({ token: `demo.${u.id}`, user: publicUser(u) });
 
 function listItem(e: Email) {
@@ -272,16 +273,42 @@ async function route(method: string, url: URL, body: Record<string, unknown>, to
       if (path.endsWith('register')) {
         if (existing) return fail(409, 'An account with this email already exists');
         const name = String(body.name ?? '').trim() || email.split('@')[0];
-        const user = { id: uuid(), email, name, passwordHash };
+        const user: User = { id: uuid(), email, name, passwordHash };
         db.users.push(user);
         return ok(session(user), 201);
       }
-      if (!existing || existing.passwordHash !== passwordHash) return fail(401, 'Invalid email or password');
+      if (!existing || !existing.passwordHash || existing.passwordHash !== passwordHash) {
+        return fail(401, 'Invalid email or password');
+      }
       return ok(session(existing));
     });
   }
   if (method === 'POST' && path === '/api/auth/google') {
-    return fail(400, 'Google login needs the real backend. In this browser demo, sign up with email.');
+    // No server here: ask Google directly who the access token belongs to.
+    const accessToken = String(body.accessToken ?? '');
+    if (!accessToken) return fail(400, 'Google sign-in failed');
+    let profile: { email?: string; email_verified?: boolean; name?: string; picture?: string };
+    try {
+      const r = await fetch('https://www.googleapis.com/oauth2/v3/userinfo', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (!r.ok) return fail(401, 'Google sign-in could not be verified');
+      profile = await r.json();
+    } catch {
+      return fail(401, 'Google sign-in could not be verified');
+    }
+    if (!profile.email || profile.email_verified === false) return fail(401, 'Google account email is not verified');
+    const email = profile.email.toLowerCase();
+    return tx((db) => {
+      let user = db.users.find((u) => u.email === email);
+      if (!user) {
+        user = { id: uuid(), email, name: profile.name || email.split('@')[0], passwordHash: '' };
+        db.users.push(user);
+      }
+      user.name = profile.name || user.name;
+      user.avatarUrl = profile.picture ?? null;
+      return ok(session(user));
+    });
   }
 
   const db = load();
