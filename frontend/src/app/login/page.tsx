@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { Eye, EyeOff } from 'lucide-react';
-import { api, User } from '@/lib/api';
+import { api, DEMO_MODE, User } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { GOOGLE_CLIENT_ID } from '../providers';
 import { GoogleButton, GoogleButtonUnavailable } from '@/components/GoogleButton';
@@ -133,6 +133,13 @@ export default function LoginPage() {
             {mode === 'login' ? 'Sign up' : 'Login'}
           </button>
         </p>
+
+        {DEMO_MODE && (
+          <p className="mt-5 rounded-lg bg-surface px-3 py-2 text-center text-xs text-muted">
+            Demo mode: the scheduler backend runs inside your browser and data is stored only on this
+            device. Sign up with any email to try it.
+          </p>
+        )}
       </div>
     </main>
   );

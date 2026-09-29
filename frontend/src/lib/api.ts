@@ -26,8 +26,14 @@ export class ApiError extends Error {
   }
 }
 
-export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const token = getToken();
+// Frontend-only deployments (e.g. Vercel without a backend) run the scheduler in the browser.
+export const DEMO_MODE = process.env.NEXT_PUBLIC_DEMO_MODE === 'true';
+
+async function send(path: string, init: RequestInit, token: string | null): Promise<{ status: number; data: any }> {
+  if (DEMO_MODE) {
+    const { demoFetch } = await import('./demo/server');
+    return demoFetch(path, init, token);
+  }
   const res = await fetch(`${API_URL}${path}`, {
     ...init,
     headers: {
@@ -36,15 +42,20 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
       ...init.headers,
     },
   });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    if (res.status === 401 && token) {
+  return { status: res.status, data: await res.json().catch(() => ({})) };
+}
+
+export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken();
+  const { status, data } = await send(path, init, token);
+  if (status >= 400) {
+    if (status === 401 && token) {
       setToken(null);
       if (typeof window !== 'undefined' && !window.location.pathname.startsWith('/login')) {
         window.location.href = '/login';
       }
     }
-    throw new ApiError(data.error ?? `Request failed (${res.status})`, res.status);
+    throw new ApiError(data.error ?? `Request failed (${status})`, status);
   }
   return data as T;
 }

@@ -5,6 +5,10 @@ This guide takes the Email Job Scheduler from this repository to a live URL.
 There are two ways to host it permanently, plus a quick option for sharing a link from your own
 computer. Pick one:
 
+> **Just want a public link with no backend at all?** Use
+> **[Option D: Vercel only (frontend demo mode)](#option-d-vercel-only-frontend-demo-mode)**.
+> The scheduler runs inside the visitor's browser, and deploying takes about 2 minutes.
+>
 > **Just want a link fast, and you have Docker installed?** Use
 > **[Option C: your own computer + a Cloudflare quick tunnel](#option-c-your-own-computer--a-public-link-cloudflare-quick-tunnel)**.
 > It needs no accounts, credentials or domain and takes about 10 minutes. The link only works
@@ -34,10 +38,11 @@ Both options need **Step 1 (Google OAuth)** first.
 2. [Option A: Railway (backend) + Vercel (frontend)](#option-a-railway-backend--vercel-frontend)
 3. [Option B: Single server with Docker Compose](#option-b-single-server-vps-with-docker-compose)
 4. [Option C: Your own computer + a public link](#option-c-your-own-computer--a-public-link-cloudflare-quick-tunnel)
-5. [Ethereal: viewing the emails you send](#ethereal-viewing-the-emails-you-send)
-6. [Checking the deployment works](#checking-the-deployment-works)
-7. [Troubleshooting](#troubleshooting)
-8. [Environment variable reference](#environment-variable-reference)
+5. [Option D: Vercel only (frontend demo mode)](#option-d-vercel-only-frontend-demo-mode)
+6. [Ethereal: viewing the emails you send](#ethereal-viewing-the-emails-you-send)
+7. [Checking the deployment works](#checking-the-deployment-works)
+8. [Troubleshooting](#troubleshooting)
+9. [Environment variable reference](#environment-variable-reference)
 
 ---
 
@@ -429,6 +434,64 @@ If `caddy` won't start because port 80 or 443 is already in use (for example by 
 another web server), stop that program, or edit the `caddy` → `ports` section of
 `docker-compose.prod.yml`: change `'80:80'` to `'8080:80'` and `'443:443'` to `'8443:443'`.
 The tunnel keeps working either way, and locally you'd use <http://localhost:8080>.
+
+---
+
+## Option D: Vercel only (frontend demo mode)
+
+This deploys **only the Next.js frontend** to Vercel. It needs no database, Redis, server or
+credentials. In this mode the frontend switches to a **backend simulated in the browser**
+(`frontend/src/lib/demo/server.ts`). It serves the same API routes and follows the same rules as
+the real worker:
+
+- each email waits until its time (`start + i × delay`),
+- there's a 2-second minimum gap between sends,
+- each sender has an hourly limit, and extra emails move into the next hour in their original order,
+- **Stop server / Start server** buttons in the **Server console** panel reproduce the restart
+  scenario. While stopped, the dashboard can't reach the API. On start, pending emails are
+  recovered and overdue ones go out immediately,
+- a page reload also acts like a restart, and the data persists,
+- only one browser tab runs the worker, so nothing is sent twice.
+
+The Server console shows the same log lines as the real backend
+(`sent -> x (7/20 this hour)`, `hourly limit (20) reached: … rescheduled to 18:00:00`, `[recovery] …`).
+
+**Differences from the real backend:** emails aren't actually delivered (no SMTP/Ethereal).
+Data lives in the visitor's browser (localStorage), so each visitor has their own separate demo.
+Sending only happens while a tab with the app is open. Google login needs the real backend, so
+use email sign-up.
+
+### D1. Deploy (about 2 minutes)
+
+1. Go to <https://vercel.com/new> and sign in with GitHub.
+2. Find **`adithya1258/email-scheduler`** and click **Import**. If it isn't listed, click
+   **Adjust GitHub App Permissions** and give Vercel access to the repo.
+3. **Root Directory**: click **Edit** and choose **`frontend`**. Leave everything else at the
+   defaults (Framework: Next.js).
+4. Don't add any environment variables. On Vercel, if `NEXT_PUBLIC_API_URL` isn't set, the build
+   switches to demo mode automatically.
+5. Click **Deploy**. After about a minute you get your link, e.g.
+   `https://email-scheduler-xyz.vercel.app`.
+
+Every later `git push` to `main` redeploys automatically.
+
+### D2. Try it
+
+1. Open the link and **Sign up** with any email and password. The account is stored only in
+   your browser.
+2. **Compose → Upload List →** `samples/leads.csv` from the repo (download it from GitHub).
+   Set Delay `5` and Hourly Limit `50`, then **Send Later → Now → Done**. Watch **Scheduled**
+   move to **Sent** and the Server console log each send.
+3. **Restart:** schedule 3 emails 20 s apart and click **Stop server** after the first one is
+   sent. The dashboard shows "Failed to fetch". Wait 30 s and click **Start server**: the missed
+   one sends immediately and the last one sends on time.
+4. **Rate limit:** upload `samples/load-test.csv` with Delay `0` and Hourly Limit `20`. Sends go
+   out 2 s apart until the limit, then the rest move to the next hour.
+5. The ↺ button in the Server console clears all demo data in your browser.
+
+> To switch the Vercel deployment to the **real** backend later, deploy the backend (Option A),
+> then set `NEXT_PUBLIC_API_URL` in Vercel and redeploy. Demo mode turns off automatically.
+> You can also force either mode with `NEXT_PUBLIC_DEMO_MODE=true` / `false`.
 
 ---
 

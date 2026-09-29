@@ -7,6 +7,8 @@ import { useAuth } from '@/lib/auth';
 import { StatsProvider } from '@/lib/stats';
 import { Sidebar } from '@/components/Sidebar';
 import { Spinner } from '@/components/Spinner';
+import { ServerConsole } from '@/components/ServerConsole';
+import { DEMO_MODE } from '@/lib/api';
 
 export default function AppLayout({ children }: { children: React.ReactNode }) {
   const { user, loading } = useAuth();
@@ -42,6 +44,7 @@ export default function AppLayout({ children }: { children: React.ReactNode }) {
           <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
         </div>
       </div>
+      {DEMO_MODE && <ServerConsole />}
     </StatsProvider>
   );
 }

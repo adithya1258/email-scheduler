@@ -22,6 +22,11 @@ email-scheduler/
 **Deploying?** See **[DEPLOYMENT.md](DEPLOYMENT.md)** for step-by-step instructions: Railway + Vercel,
 or a single server with Docker Compose and automatic HTTPS.
 
+**Just want a live demo?** Import this repo on [Vercel](https://vercel.com/new) with Root Directory
+`frontend` and no environment variables. The frontend then runs in **demo mode**, with the scheduler
+engine (queue, 2 s gap, hourly limits, restart recovery) simulated in the browser. See
+[DEPLOYMENT.md, Option D](DEPLOYMENT.md#option-d-vercel-only-frontend-demo-mode).
+
 ---
 
 ## 1. Running it locally
