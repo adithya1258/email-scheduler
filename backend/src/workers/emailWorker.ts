@@ -5,6 +5,7 @@ import { createRedis } from '../queue/connection';
 import { SendEmailJob } from '../queue/emailQueue';
 import { getSender, sendMail } from '../services/mailer';
 import { takeHourlySlot } from '../services/rateLimiter';
+import { error, log, warn } from '../logger';
 
 // A row stuck in 'sending' longer than this is assumed to belong to a crashed worker.
 const STALE_SENDING_MS = 5 * 60 * 1000;
@@ -65,7 +66,10 @@ async function processEmail(job: Job<SendEmailJob>, token?: string): Promise<str
   // 3. Hourly limit per sender, shared across all workers through Redis.
   const slot = await takeHourlySlot(email.sender_id, email.hourly_limit, config.minDelayBetweenEmailsMs);
   if (!slot.allowed) {
-    console.log(`[worker] hourly limit hit for sender ${email.sender_id}; ${email.id} -> ${slot.retryAt.toISOString()}`);
+    log(
+      `[worker] hourly limit (${email.hourly_limit}) reached: ${email.to_email} rescheduled to ` +
+        slot.retryAt.toTimeString().slice(0, 8),
+    );
     return postpone(job, token, email.id, slot.retryAt);
   }
 
@@ -81,6 +85,7 @@ async function processEmail(job: Job<SendEmailJob>, token?: string): Promise<str
         WHERE id = $1`,
       [email.id, result.messageId, result.previewUrl],
     );
+    log(`[worker] sent -> ${email.to_email} (${slot.used}/${email.hourly_limit} this hour)`);
     return result.messageId;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -101,11 +106,10 @@ export function startEmailWorker(): Worker<SendEmailJob> {
     limiter: { max: 1, duration: config.minDelayBetweenEmailsMs },
   });
 
-  worker.on('completed', (job, result) => console.log(`[worker] ${job.id} done: ${result}`));
-  worker.on('failed', (job, err) => console.warn(`[worker] ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`));
-  worker.on('error', (err) => console.error('[worker] error', err));
+  worker.on('failed', (job, err) => warn(`[worker] ${job?.id} failed (attempt ${job?.attemptsMade}): ${err.message}`));
+  worker.on('error', (err) => error('[worker] error', err));
 
-  console.log(
+  log(
     `[worker] started: concurrency=${config.workerConcurrency}, min gap=${config.minDelayBetweenEmailsMs}ms, ` +
       `max/hour/sender=${config.maxEmailsPerHourPerSender}, mail mode=${config.mailMode}`,
   );

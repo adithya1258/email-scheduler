@@ -1,12 +1,13 @@
 import { createApp } from './app';
 import { prepareInfrastructure, registerShutdown, startWorkerWithRecovery } from './bootstrap';
 import { config } from './config';
+import { log } from './logger';
 
 async function main() {
   await prepareInfrastructure();
 
   const server = createApp().listen(config.port, () => {
-    console.log(`[api] listening on http://localhost:${config.port}`);
+    log(`[api] listening on http://localhost:${config.port}`);
   });
 
   const closers: Array<() => Promise<unknown>> = [];

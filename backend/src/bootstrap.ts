@@ -1,5 +1,6 @@
 import { Worker } from 'bullmq';
 import { pool } from './db';
+import { log } from './logger';
 import { migrate } from './db/migrate';
 import { redis } from './queue/connection';
 import { emailQueue } from './queue/emailQueue';
@@ -16,7 +17,7 @@ export async function prepareInfrastructure() {
 export async function startWorkerWithRecovery(): Promise<Worker> {
   const worker = startEmailWorker();
   const recovered = await recoverPendingJobs();
-  console.log(`[recovery] ensured ${recovered} pending email job(s) are queued`);
+  log(`[recovery] ensured ${recovered} pending email job(s) are queued`);
   return worker;
 }
 
@@ -25,7 +26,7 @@ export function registerShutdown(closers: Array<() => Promise<unknown>>) {
   const shutdown = async (signal: string) => {
     if (closing) return;
     closing = true;
-    console.log(`[shutdown] ${signal} received, closing...`);
+    log(`[shutdown] ${signal} received, closing...`);
     // Workers first: lets in-flight sends finish so nothing is left half-done.
     for (const close of closers) await close().catch((e) => console.error(e));
     await emailQueue.close();

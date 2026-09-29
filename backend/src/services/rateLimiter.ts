@@ -18,7 +18,7 @@ export function hourWindow(now = Date.now()): number {
   return Math.floor(now / HOUR_MS);
 }
 
-export type SlotResult = { allowed: true } | { allowed: false; retryAt: Date };
+export type SlotResult = { allowed: true; used: number } | { allowed: false; retryAt: Date };
 
 /**
  * Try to reserve one send for `senderId` in the current hour window.
@@ -37,7 +37,7 @@ export async function takeHourlySlot(
   const window = hourWindow(now);
   const key = `ratelimit:sender:${senderId}:${window}`;
   const got = (await redis.eval(TAKE_SLOT, 1, key, String(limit), String(2 * HOUR_MS))) as number;
-  if (got > 0) return { allowed: true };
+  if (got > 0) return { allowed: true, used: got };
 
   const nextWindowStart = (window + 1) * HOUR_MS;
   const ticketKey = `ratelimit:overflow:${senderId}:${window + 1}`;

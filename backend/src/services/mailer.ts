@@ -1,6 +1,7 @@
 import nodemailer, { Transporter } from 'nodemailer';
 import { config } from '../config';
 import { pool } from '../db';
+import { log } from '../logger';
 
 export interface Sender {
   id: string;
@@ -92,7 +93,7 @@ export async function ensureDefaultSender(): Promise<void> {
     smtp_user: account.user,
     smtp_pass: account.pass,
   });
-  console.log(`[mailer] created Ethereal account ${account.user} (login at https://ethereal.email)`);
+  log(`[mailer] created Ethereal account ${account.user} (login at https://ethereal.email)`);
 }
 
 export async function getSender(id: string): Promise<Sender | null> {
@@ -115,9 +116,6 @@ export async function sendMail(
     subject: msg.subject,
     html: msg.html,
   });
-  if (config.mailMode === 'log') {
-    console.log(`[mailer] (log mode) ${sender.email} -> ${msg.to}: ${msg.subject}`);
-  }
   const preview = config.mailMode === 'ethereal' ? nodemailer.getTestMessageUrl(info) : false;
   return { messageId: info.messageId, previewUrl: preview || null };
 }
