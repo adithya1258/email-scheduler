@@ -22,6 +22,8 @@ export function SendLaterPopover({
   busy?: boolean;
 }) {
   const [value, setValue] = useState('');
+  // "Now" means the moment Done is clicked, not the minute shown in the input.
+  const [isNow, setIsNow] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -46,9 +48,13 @@ export function SendLaterPopover({
 
   function done() {
     if (!value) return setError('Pick a date & time or choose an option');
+    if (isNow) return onDone(new Date());
     const when = new Date(value);
     if (Number.isNaN(when.getTime())) return setError('Invalid date');
-    if (when.getTime() < Date.now() - 60_000) return setError('That time is in the past');
+    // The input only has minute precision, so compare against the start of the current minute.
+    const minuteStart = new Date();
+    minuteStart.setSeconds(0, 0);
+    if (when.getTime() < minuteStart.getTime()) return setError('That time is in the past');
     onDone(when);
   }
 
@@ -67,6 +73,7 @@ export function SendLaterPopover({
           min={toLocalInputValue(new Date())}
           onChange={(e) => {
             setValue(e.target.value);
+            setIsNow(false);
             setError(null);
           }}
           aria-label="Pick date & time"
@@ -84,10 +91,11 @@ export function SendLaterPopover({
                 type="button"
                 onClick={() => {
                   setValue(v);
+                  setIsNow(p.label === 'Now');
                   setError(null);
                 }}
                 className={`w-full rounded-lg px-2 py-2 text-left text-sm transition hover:bg-surface ${
-                  value === v ? 'font-semibold text-brand' : 'text-gray-700'
+                  (p.label === 'Now' ? isNow : value === v && !isNow) ? 'font-semibold text-brand' : 'text-gray-700'
                 }`}
               >
                 {p.label}
