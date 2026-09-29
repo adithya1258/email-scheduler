@@ -458,8 +458,8 @@ The Server console shows the same log lines as the real backend
 
 **Differences from the real backend:** emails aren't actually delivered (no SMTP/Ethereal).
 Data lives in the visitor's browser (localStorage), so each visitor has their own separate demo.
-Sending only happens while a tab with the app is open. Google login needs the real backend, so
-use email sign-up.
+Sending only happens while a tab with the app is open. Google login works if you set
+`NEXT_PUBLIC_GOOGLE_CLIENT_ID` (see D3); otherwise use email sign-up.
 
 ### D1. Deploy (about 2 minutes)
 
@@ -488,6 +488,17 @@ Every later `git push` to `main` redeploys automatically.
 4. **Rate limit:** upload `samples/load-test.csv` with Delay `0` and Hourly Limit `20`. Sends go
    out 2 s apart until the limit, then the rest move to the next hour.
 5. The ↺ button in the Server console clears all demo data in your browser.
+
+### D3. (Optional) Turn on Google login
+
+1. Create an OAuth client as in [Step 1](#step-1-create-google-oauth-credentials). Under
+   **Authorized JavaScript origins**, add your Vercel URL, e.g. `https://email-scheduler-xyz.vercel.app`.
+2. In Vercel, open **Project → Settings → Environment Variables** and add
+   `NEXT_PUBLIC_GOOGLE_CLIENT_ID` = your client ID.
+3. Open **Deployments → ⋯ (latest) → Redeploy**. The ID is built into the page, so a redeploy is required.
+
+In demo mode the browser checks the Google sign-in directly with Google and stores the
+profile (name, email, photo) locally.
 
 > To switch the Vercel deployment to the **real** backend later, deploy the backend (Option A),
 > then set `NEXT_PUBLIC_API_URL` in Vercel and redeploy. Demo mode turns off automatically.
