@@ -11,10 +11,16 @@ SMTP (Ethereal). Jobs survive restarts and are never sent twice.
 
 ```
 email-scheduler/
-├── docker-compose.yml   # Postgres + Redis (AOF persistence)
-├── backend/             # API + BullMQ worker
-└── frontend/            # Next.js dashboard
+├── docker-compose.yml        # local dev: Postgres + Redis (AOF persistence)
+├── docker-compose.prod.yml   # production: full stack + Caddy (HTTPS) on one server
+├── Caddyfile                 # reverse proxy config for production
+├── DEPLOYMENT.md             # step-by-step hosting guide
+├── backend/                  # API + BullMQ worker (Dockerfile included)
+└── frontend/                 # Next.js dashboard (Dockerfile included)
 ```
+
+**Deploying?** See **[DEPLOYMENT.md](DEPLOYMENT.md)** for step-by-step instructions: Railway + Vercel,
+or a single server with Docker Compose and automatic HTTPS.
 
 ---
 

@@ -1,0 +1,91 @@
+# Production stack for a single server (VPS). See DEPLOYMENT.md, "Option B".
+#   cp .env.prod.example .env.prod   # fill it in
+#   docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --build
+#
+# Caddy serves everything on one domain with automatic HTTPS:
+#   https://DOMAIN/api/*, /health  -> backend
+#   https://DOMAIN/*               -> frontend
+name: email-scheduler-prod
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: email_scheduler
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d email_scheduler']
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # AOF persistence: delayed BullMQ jobs survive a Redis restart
+    command: ['redis-server', '--appendonly', 'yes', '--appendfsync', 'everysec']
+    volumes:
+      - redisdata:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      retries: 10
+
+  backend:
+    build: ./backend
+    restart: unless-stopped
+    # Give in-flight sends time to finish on deploy/restart
+    stop_grace_period: 30s
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    environment:
+      PORT: 4000
+      DATABASE_URL: postgres://postgres:${POSTGRES_PASSWORD}@postgres:5432/email_scheduler
+      REDIS_URL: redis://redis:6379
+      CORS_ORIGIN: https://${DOMAIN:?set DOMAIN in .env.prod}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET in .env.prod}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      RUN_WORKER: 'true'
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-5}
+      MIN_DELAY_BETWEEN_EMAILS_MS: ${MIN_DELAY_BETWEEN_EMAILS_MS:-2000}
+      MAX_EMAILS_PER_HOUR_PER_SENDER: ${MAX_EMAILS_PER_HOUR_PER_SENDER:-200}
+      MAIL_MODE: ${MAIL_MODE:-ethereal}
+      ETHEREAL_USER: ${ETHEREAL_USER:-}
+      ETHEREAL_PASS: ${ETHEREAL_PASS:-}
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Same origin as the site: Caddy routes /api to the backend
+        NEXT_PUBLIC_API_URL: https://${DOMAIN}
+        NEXT_PUBLIC_GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+    restart: unless-stopped
+    depends_on:
+      - backend
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - '80:80'
+      - '443:443'
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - frontend
+      - backend
+
+volumes:
+  pgdata:
+  redisdata:
+  caddy_data:
+  caddy_config:

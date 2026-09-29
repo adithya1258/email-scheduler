@@ -4,6 +4,9 @@
   "private": true,
   "description": "Email job scheduler service: Express + BullMQ + Redis + PostgreSQL + Ethereal SMTP",
   "main": "dist/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "dev:api": "RUN_WORKER=false tsx watch src/index.ts",

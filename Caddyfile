@@ -1,0 +1,14 @@
+# Caddy gets and renews a Let's Encrypt certificate for {$DOMAIN} automatically.
+{$DOMAIN} {
+	encode gzip
+
+	handle /api/* {
+		reverse_proxy backend:4000
+	}
+	handle /health {
+		reverse_proxy backend:4000
+	}
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
