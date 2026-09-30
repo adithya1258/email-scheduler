@@ -1,41 +1,52 @@
 # Email Scheduler
 
-Email Scheduler lets you create campaigns and send emails over time. Sign in, add recipients, write your message, and choose when and how quickly to send it.
+Email Scheduler helps you create email campaigns and send messages to many recipients over time. Sign in, add recipients, write your message, and choose when and how quickly emails should be sent.
 
 ## Features
 
-- Sign in with Google or an email and password
-- Schedule emails and track their status
+### Backend
+
+- Creates campaigns and saves recipients in PostgreSQL
+- Schedules email jobs with BullMQ and Redis
+- Tracks each email as scheduled, sending, sent, or failed
+- Recovers pending emails after a restart
+- Limits send rates across workers and enforces hourly sending caps
+- Supports multiple workers processing jobs concurrently
+- Sends email through SMTP, including Ethereal for testing
+
+### Frontend
+
+- Sign in with Google or with an email and password
+- View scheduled and sent emails in a dashboard
+- Search and filter email lists, with status counts
+- Compose campaigns with a sender, recipients, subject, message, send delay, and hourly limit
 - Add recipients by typing, pasting, or uploading a CSV or text file
-- Set a delay between emails and an hourly sending limit
-- Preview test emails with Ethereal
-- View scheduled, sent, and failed emails
+- Format message content with a rich text editor
+- View email details, delivery attempts, errors, and Ethereal preview links
+- Use the dashboard on mobile screens
 
 ## Project structure
 
-- `backend/` — API and email worker
-- `frontend/` — web dashboard
-- `docker-compose.yml` — development database services
-- `docker-compose.prod.yml` — production setup
-- `Caddyfile` — HTTPS and reverse proxy settings
-- `DEPLOYMENT.md` — deployment instructions
+- `backend/` — Express API and BullMQ worker
+- `frontend/` — Next.js dashboard
+- `docker-compose.yml` — PostgreSQL and Redis for development
+- `docker-compose.prod.yml` — Production services
+- `Caddyfile` — Reverse proxy and HTTPS configuration
 
-For deployment, see [DEPLOYMENT.md](DEPLOYMENT.md). You can also deploy the frontend to Vercel to try its browser-based demo mode.
-
-## Run locally
-
-### Requirements
+## Requirements
 
 - Node.js 20 or later
 - Docker, or PostgreSQL 14+ and Redis 6.2+
 
-### Start PostgreSQL and Redis
+## Run the backend
+
+Start PostgreSQL and Redis from the project root:
 
 ```bash
 docker compose up -d
 ```
 
-### Start the backend
+In a separate terminal, install and start the backend:
 
 ```bash
 cd backend
@@ -44,7 +55,7 @@ npm install
 npm run dev
 ```
 
-Add `GOOGLE_CLIENT_ID` and `JWT_SECRET` to `backend/.env`. The backend starts on port 4000 and includes a worker.
+Set the required values in `backend/.env`, including `GOOGLE_CLIENT_ID` and `JWT_SECRET`. The API runs on port 4000, and the worker starts with it. Database tables are created automatically.
 
 To run the API and worker separately:
 
@@ -53,14 +64,18 @@ RUN_WORKER=false npm run dev
 npm run dev:worker
 ```
 
-For production, build and start the backend:
+You can run more than one worker to process jobs concurrently.
+
+For production:
 
 ```bash
 npm run build
 npm start
 ```
 
-### Start the frontend
+## Run the frontend
+
+In another terminal:
 
 ```bash
 cd frontend
@@ -69,56 +84,68 @@ npm install
 npm run dev
 ```
 
-Add `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to `frontend/.env.local`. Open [http://localhost:3000](http://localhost:3000).
+Set `NEXT_PUBLIC_GOOGLE_CLIENT_ID` in `frontend/.env.local`. Open [http://localhost:3000](http://localhost:3000).
 
 ## Set up Google sign-in
 
 1. In Google Cloud Console, create an OAuth client for a web app.
-2. Add `http://localhost:3000` to the authorized JavaScript origins.
-3. Put the client ID in both `backend/.env` and `frontend/.env.local`.
+2. Add `http://localhost:3000` as an authorized JavaScript origin.
+3. Set the client ID in both `backend/.env` (`GOOGLE_CLIENT_ID`) and `frontend/.env.local` (`NEXT_PUBLIC_GOOGLE_CLIENT_ID`).
 
-You can also create an account with an email address and password.
+Users can also sign up and sign in with an email address and password.
 
-## Email delivery
+## Set up Ethereal Email
 
-By default, the app creates and reuses an Ethereal account. Ethereal is for testing: it provides a preview link for each email instead of delivering it to a real inbox.
+Ethereal is a test email service. It captures messages and provides preview links instead of delivering them to real inboxes.
 
-To use your own Ethereal account, set `ETHEREAL_USER` and `ETHEREAL_PASS` in `backend/.env`.
+The app creates and reuses an Ethereal account by default. To use your own account:
 
-To run without sending email, set `MAIL_MODE=log`. Email details will appear in the console.
+1. Create an account at [ethereal.email](https://ethereal.email/create).
+2. Add the account credentials to `backend/.env`:
 
-## How scheduling works
-
-The app saves each campaign and its recipients in the database, then places email jobs in a Redis queue. The queue sends them at their scheduled times.
-
-The database tracks each email as scheduled, sending, sent, or failed. If the server restarts, the worker checks for pending emails and adds them back to the queue. Multiple workers can run at once.
-
-The app uses database locks and unique job IDs to prevent duplicate sends. If a worker stops while an email is being sent, the app retries it after five minutes; in that situation, a duplicate may occur.
-
-Sending speed is controlled by the campaign delay, hourly limit, and server settings. When an hourly limit is reached, the app moves emails to the next available hour.
-
-## API
-
-All endpoints except authentication require this header:
-
-```text
-Authorization: Bearer <your_jwt>
+```env
+ETHEREAL_USER=your_ethereal_username
+ETHEREAL_PASS=your_ethereal_password
 ```
 
-| Method | Path | Purpose |
-| --- | --- | --- |
-| `POST` | `/api/auth/google` | Sign in with Google |
-| `POST` | `/api/auth/register` | Create an account |
-| `POST` | `/api/auth/login` | Sign in with email and password |
-| `GET` | `/api/auth/me` | Get your profile |
-| `GET` | `/api/senders` | List sender accounts |
-| `POST` | `/api/emails/schedule` | Create a campaign |
-| `GET` | `/api/emails?tab=scheduled&search=...` | Find emails |
-| `GET` | `/api/emails/stats` | Get email counts |
-| `GET` | `/api/emails/:id` | Get email details and preview link |
-| `PATCH` | `/api/emails/:id/star` | Star or unstar an email |
-| `GET` | `/health` | Check whether the service is running |
+Each test email includes a preview link in the dashboard.
 
-## Configuration
+To run without an email service, set this in `backend/.env`:
 
-See `backend/.env.example` and `frontend/.env.example` for the available settings and descriptions.
+```env
+MAIL_MODE=log
+```
+
+In log mode, email details are printed to the backend console.
+
+Other settings are documented in `backend/.env.example` and `frontend/.env.example`.
+
+## Architecture
+
+### Scheduling
+
+When a campaign is created, the backend saves the campaign and its recipient emails in a PostgreSQL transaction. It then creates a BullMQ job for each email and schedules it in Redis.
+
+Each email gets a send time based on the campaign start time and the delay between messages. Redis makes jobs available to workers at their scheduled times.
+
+### Persistence and restart recovery
+
+PostgreSQL is the source of truth for campaign and email status. BullMQ stores queued jobs in Redis, so jobs remain available across server restarts.
+
+When a worker starts, it checks the database for emails that are still pending and re-queues them if needed. During shutdown, workers finish in-progress work before exiting.
+
+### Rate limits and concurrency
+
+- **Campaign delay:** Sets the time between emails in one campaign.
+- **Minimum send gap:** Spaces out sends across workers.
+- **Hourly limit:** Caps the number of emails sent by a sender in an hour. A shared Redis counter keeps the count consistent across workers.
+- **Worker concurrency:** Controls how many jobs one worker can process at the same time. Multiple worker processes can run together.
+- **Server limit:** Sets the maximum hourly cap users can choose.
+
+If the hourly limit is reached, queued emails are moved to the next available hour rather than dropped. The dashboard updates with their new send times.
+
+### Preventing duplicate sends
+
+Each email has a unique job ID. Before sending, a worker also updates the email's database status from `scheduled` to `sending`. Only one worker can claim it.
+
+If a worker crashes while an email is being sent, the job is retried after five minutes. A duplicate is possible if the email was delivered before the crash but the worker did not record the result.
