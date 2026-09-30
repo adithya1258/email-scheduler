@@ -13,7 +13,7 @@ export async function prepareInfrastructure() {
   await ensureDefaultSender();
 }
 
-/** Start a worker and re-enqueue anything the DB says is still pending. */
+/** Start a worker and re-enqueue anything the DB says is still pending */
 export async function startWorkerWithRecovery(): Promise<Worker> {
   const worker = startEmailWorker();
   const recovered = await recoverPendingJobs();
