@@ -1,185 +1,124 @@
 # Email Scheduler
 
-Schedule bulk emails like a boss. Sign in with Google, upload your contacts, set up a campaign, and let the system handle the rest. Emails get staggered automatically, you won't hit rate limits, and everything's backed up so nothing gets lost or sent twice.
+Email Scheduler lets you create campaigns and send emails over time. Sign in, add recipients, write your message, and choose when and how quickly to send it.
 
-## Stack
+## Features
 
-| Part | Tech |
-| --- | --- |
-| API & Jobs | TypeScript, Express 5, BullMQ (for scheduling), Redis, PostgreSQL |
-| Emails | Nodemailer + Ethereal (or your own SMTP) |
-| UI | Next.js 16, React 19, Tailwind, Google OAuth |
+- Sign in with Google or an email and password
+- Schedule emails and track their status
+- Add recipients by typing, pasting, or uploading a CSV or text file
+- Set a delay between emails and an hourly sending limit
+- Preview test emails with Ethereal
+- View scheduled, sent, and failed emails
 
-## The folder layout
+## Project structure
 
-```
-email-scheduler/
-├── docker-compose.yml        # Dev: Postgres + Redis
-├── docker-compose.prod.yml   # Prod: full stack with HTTPS
-├── Caddyfile                 # Reverse proxy setup
-├── DEPLOYMENT.md             # How to deploy (Railway, Vercel, or your own server)
-├── backend/                  # API + job worker
-└── frontend/                 # Dashboard
-```
+- `backend/` — API and email worker
+- `frontend/` — web dashboard
+- `docker-compose.yml` — development database services
+- `docker-compose.prod.yml` — production setup
+- `Caddyfile` — HTTPS and reverse proxy settings
+- `DEPLOYMENT.md` — deployment instructions
 
-**Ready to deploy?** Jump to [DEPLOYMENT.md](DEPLOYMENT.md). We cover Railway + Vercel, or running everything on one server with Docker Compose and automatic HTTPS.
+For deployment, see [DEPLOYMENT.md](DEPLOYMENT.md). You can also deploy the frontend to Vercel to try its browser-based demo mode.
 
-**Just want to see it work?** Deploy the frontend folder to Vercel and it'll run in demo mode—everything happens in your browser, no backend needed.
+## Run locally
 
----
+### Requirements
 
-## Getting it running locally
+- Node.js 20 or later
+- Docker, or PostgreSQL 14+ and Redis 6.2+
 
-### What you need
-
-- Node.js 20+ (tested on 22)
-- Docker (or install PostgreSQL 14+ and Redis 6.2+ yourself)
-
-### Fire up the database
+### Start PostgreSQL and Redis
 
 ```bash
-cd email-scheduler
 docker compose up -d
 ```
 
-### Backend
+### Start the backend
 
 ```bash
 cd backend
-cp .env.example .env        # Fill in GOOGLE_CLIENT_ID and JWT_SECRET
+cp .env.example .env
 npm install
-npm run dev                 # Runs on :4000 with a worker built in
+npm run dev
 ```
 
-The database tables get created automatically. To scale up, separate the API from the worker:
+Add `GOOGLE_CLIENT_ID` and `JWT_SECRET` to `backend/.env`. The backend starts on port 4000 and includes a worker.
+
+To run the API and worker separately:
 
 ```bash
-RUN_WORKER=false npm run dev    # Just the API
-npm run dev:worker              # Worker (run this in multiple terminals)
+RUN_WORKER=false npm run dev
+npm run dev:worker
 ```
 
-Production: `npm run build && npm start`
+For production, build and start the backend:
 
-### Frontend
+```bash
+npm run build
+npm start
+```
+
+### Start the frontend
 
 ```bash
 cd frontend
-cp .env.example .env.local  # Add NEXT_PUBLIC_GOOGLE_CLIENT_ID
+cp .env.example .env.local
 npm install
-npm run dev                 # Open http://localhost:3000
+npm run dev
 ```
 
-### Sending emails through Ethereal
+Add `NEXT_PUBLIC_GOOGLE_CLIENT_ID` to `frontend/.env.local`. Open [http://localhost:3000](http://localhost:3000).
 
-By default, we create a free Ethereal account for you on first run and reuse it forever. Every email sent gets a preview link you can click to see what it looked like.
+## Set up Google sign-in
 
-Want to use your own provider? Create an Ethereal account at <https://ethereal.email/create>, then set `ETHEREAL_USER` and `ETHEREAL_PASS` in your `.env`.
+1. In Google Cloud Console, create an OAuth client for a web app.
+2. Add `http://localhost:3000` to the authorized JavaScript origins.
+3. Put the client ID in both `backend/.env` and `frontend/.env.local`.
 
-Running offline? Set `MAIL_MODE=log` and emails just print to the console.
+You can also create an account with an email address and password.
 
-### Setting up Google OAuth
+## Email delivery
 
-1. Head to Google Cloud Console → APIs & Services → Credentials
-2. Create an OAuth client for a web app
-3. Add `http://localhost:3000` to Authorized JavaScript Origins
-4. Grab your Client ID and put it in:
-   - `backend/.env` as `GOOGLE_CLIENT_ID`
-   - `frontend/.env.local` as `NEXT_PUBLIC_GOOGLE_CLIENT_ID`
+By default, the app creates and reuses an Ethereal account. Ethereal is for testing: it provides a preview link for each email instead of delivering it to a real inbox.
 
-The frontend pops up a Google login. The backend verifies it and hands back your own JWT. You can also just sign up with email/password.
+To use your own Ethereal account, set `ETHEREAL_USER` and `ETHEREAL_PASS` in `backend/.env`.
 
----
+To run without sending email, set `MAIL_MODE=log`. Email details will appear in the console.
 
-## How it works
+## How scheduling works
 
+The app saves each campaign and its recipients in the database, then places email jobs in a Redis queue. The queue sends them at their scheduled times.
+
+The database tracks each email as scheduled, sending, sent, or failed. If the server restarts, the worker checks for pending emails and adds them back to the queue. Multiple workers can run at once.
+
+The app uses database locks and unique job IDs to prevent duplicate sends. If a worker stops while an email is being sent, the app retries it after five minutes; in that situation, a duplicate may occur.
+
+Sending speed is controlled by the campaign delay, hourly limit, and server settings. When an hourly limit is reached, the app moves emails to the next available hour.
+
+## API
+
+All endpoints except authentication require this header:
+
+```text
+Authorization: Bearer <your_jwt>
 ```
-Next.js ──────► Express API ──(1) Save campaign & emails in one transaction ──► Database
-                     │
-                     └──(2) Add delayed jobs ──────► Redis + BullMQ
-                                                         │
-                             Workers (multiple copies) ◄─┘
-                             1. Claim an email (lock it)
-                             2. Check hourly limit
-                             3. Send via SMTP
-                             4. Mark done
-```
 
-### The scheduling part
-
-When you create a campaign, we:
-1. Save the campaign and all email addresses in one database transaction
-2. Space them out by scheduling each one at `startTime + (position × delay)`
-3. Push each email to a job queue with that scheduled time
-4. Redis wakes up each job at exactly the right moment
-
-No cron, no polling—just Redis doing its thing.
-
-### Stuff doesn't get lost
-
-- **Database is the source of truth**: Every email has a status (`scheduled` → `sending` → `sent` or `failed`)
-- **Jobs survive restarts**: BullMQ keeps jobs in Redis, even if you turn off the server
-- **Recovery on boot**: Workers check the database when they start and re-queue anything that's still pending
-- **Graceful shutdown**: Workers finish what they're doing before exiting
-
-### You'll never send twice
-
-1. Each job's ID is tied to a specific email, so it can't get queued twice
-2. Before sending, we lock the database row (`UPDATE ... SET status='sending' WHERE status='scheduled'`)—only one worker can win
-3. If a worker crashes while sending, we wait 5 minutes then retry (this is the only way a duplicate could happen)
-4. The database prevents the same email from being added to the same campaign twice
-
-### Rate limits & concurrency
-
-| What | Where | Does |
+| Method | Path | Purpose |
 | --- | --- | --- |
-| Parallel jobs per worker | BullMQ | How many emails send at the same time on one worker |
-| Min gap between emails | Redis limiter | Slowdown between all sends (mimics provider throttling) |
-| Delay in campaign | Your UI choice | Space between emails in a single campaign |
-| Hourly cap | Redis counter | Max emails per sender per hour |
-| Server cap | Config | Upper bound on what you can set in the UI |
-
-The hourly limit uses a Redis script so every worker sees the same count, no matter how many are running.
-
-When you hit the hourly limit, emails get bumped to the next hour—they're not dropped. The dashboard updates in real time with the new send time.
-
----
-
-## API endpoints
-
-Everything except auth requires `Authorization: Bearer <your_jwt>`.
-
-| Method | Path | What it does |
-| --- | --- | --- |
-| POST | `/api/auth/google` | Google sign-in → JWT |
-| POST | `/api/auth/register` | Sign up with email/password |
-| POST | `/api/auth/login` | Sign in with email/password |
-| GET | `/api/auth/me` | Your profile |
-| GET | `/api/senders` | Your sender accounts |
-| POST | `/api/emails/schedule` | Create a campaign |
-| GET | `/api/emails?tab=scheduled\|sent&search=...` | List emails |
-| GET | `/api/emails/stats` | Counts (scheduled, sent, failed) |
-| GET | `/api/emails/:id` | Email details & preview link |
-| PATCH | `/api/emails/:id/star` | Star/unstar an email |
-| GET | `/health` | Health check |
-
----
-
-## What you get in the UI
-
-- **Login**: Google OAuth, or email/password
-- **Sidebar**: Your profile, Compose button, and tabs for Scheduled/Sent with live counts
-- **Scheduled & Sent tabs**: Full email list with search, filters, status badges, and previews. Refreshes every 5 seconds
-- **Email detail**: Sender, recipient, time, body preview, delivery attempts, errors, and a link to the Ethereal preview
-- **Compose**:
-  - Pick a sender
-  - Add recipients (type, paste, or upload a `.csv`/`.txt` file—we'll extract email addresses)
-  - Set subject, delay between sends, and hourly limit
-  - Rich text editor (formatting, links, lists, quotes)
-  - Date/time picker with quick presets (Now, Tomorrow at 10 AM, etc.)
-- **Mobile friendly**: Sidebar turns into a drawer on small screens
-
----
+| `POST` | `/api/auth/google` | Sign in with Google |
+| `POST` | `/api/auth/register` | Create an account |
+| `POST` | `/api/auth/login` | Sign in with email and password |
+| `GET` | `/api/auth/me` | Get your profile |
+| `GET` | `/api/senders` | List sender accounts |
+| `POST` | `/api/emails/schedule` | Create a campaign |
+| `GET` | `/api/emails?tab=scheduled&search=...` | Find emails |
+| `GET` | `/api/emails/stats` | Get email counts |
+| `GET` | `/api/emails/:id` | Get email details and preview link |
+| `PATCH` | `/api/emails/:id/star` | Star or unstar an email |
+| `GET` | `/health` | Check whether the service is running |
 
 ## Configuration
 
-All settings live in `.env.example` files in the `backend` and `frontend` folders. Check them out—each variable is documented inline.
+See `backend/.env.example` and `frontend/.env.example` for the available settings and descriptions.
