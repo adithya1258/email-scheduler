@@ -6,7 +6,7 @@
 #   https://DOMAIN/api/*, /health  -> backend
 #   https://DOMAIN/*               -> frontend
 #
-# Own computer + public link instead (DEPLOYMENT.md, "Option C"):
+# Own computer + public link instead :
 #   use .env.tunnel.example (DOMAIN=:80) and add `--profile tunnel`.
 name: email-scheduler-prod
 
