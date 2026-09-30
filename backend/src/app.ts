@@ -17,7 +17,7 @@ export function createApp() {
 
   app.use((_req, res) => res.status(404).json({ error: 'Not found' }));
 
-  // Express 5 forwards rejected promises from async handlers here.
+  // Express 5 forwards rejected promises from async handlers here
   app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
     if (err instanceof ZodError) {
       return res.status(400).json({ error: 'Invalid request', details: err.issues });
